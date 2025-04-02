@@ -1,0 +1,17 @@
+version: "3.9"
+
+services:
+  sleap-gui:
+    build:
+      context: .
+      dockerfile: Dockerfile.sleap.cpu
+    container_name: sleap_gui
+    ports:
+      - "8888:8888"   # Jupyter Lab
+      - "6901:6901"   # GUI desktop environment (noVNC)
+    volumes:
+      - ./sleap-data:/home/kasm-user/sleap-data
+    environment:
+      - DISPLAY=:1
+    shm_size: "2gb"
+    restart: unless-stopped
