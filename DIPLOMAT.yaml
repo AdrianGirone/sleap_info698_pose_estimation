@@ -1,0 +1,10 @@
+name: diplomat
+channels:
+  - conda-forge
+  - nvidia
+  - anaconda
+dependencies:
+  - python=3.9
+  - pip
+  - pip:
+      - diplomat-track[gui]
