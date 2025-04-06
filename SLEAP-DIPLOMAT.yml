@@ -3,21 +3,23 @@ name: sleap-diplomat
 channels:
   - conda-forge
   - nvidia
-  - sleap/label/dev
-  - sleap
   - anaconda
 dependencies:
-  - python=3.9
+  - python=3.10
+  - pytorch # Installs a GPU-enabled PyTorch build (from conda-forge or nvidia)
+  - cudatoolkit=11.7 # Adjust this version as needed
   - pip
-  - sleap>=1.2.3
-  - typing-extensions=3.10.0.2  # Explicitly pin the version
-  - numpy<1.25.0  # Add numpy version constraint if needed
+  - typing-extensions=3.10.0.2
+  - numpy=1.21.6
   - pandas
   - matplotlib
   - scikit-learn
   - opencv
   - pip:
-    - diplomat-track[gui]
-    - jupyter
-    - jupyterlab
-    - jupyter-server-proxy
+      - sleap[pypi]==1.4.1
+      - diplomat-track[gui]
+      - jupyter==1.1.1
+      - jupyterlab==3.4.4
+      - jupyter-server-proxy==3.2.4 # Changed from 3.8.0 to 3.2.4 to match available versions
+      - jsonschema==3.2.0
+      - attrs==21.4.0
