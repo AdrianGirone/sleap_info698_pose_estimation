@@ -1,0 +1,12 @@
+name: sleap
+channels:
+  - conda-forge
+  - nvidia
+  - sleap/label/dev
+  - sleap
+  - anaconda
+dependencies:
+  - python=3.7
+  - pip
+  - sleap
+  - typing-extensions=3.10

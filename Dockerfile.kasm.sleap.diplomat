@@ -1,0 +1,181 @@
+##############################
+# Stage 1: Builder – Create the Conda Environment Using Mambaforge
+##############################
+FROM kasmweb/ubuntu-jammy-desktop:1.16.0 AS builder
+
+# Run as root for installation
+USER root
+
+# Install essential system packages (including dependencies for GUI apps)
+RUN apt-get update && apt-get install -y \
+    wget \
+    git \
+    vim \
+    build-essential \
+    pkg-config \
+    libgtk-3-dev \
+    libwebkit2gtk-4.0-dev \
+    libnotify-dev \
+    freeglut3-dev \
+    dbus \
+    dbus-x11
+
+# Install Mambaforge using a fixed URL (version 4.12.0-3)
+RUN curl -fsSL "https://github.com/conda-forge/miniforge/releases/download/4.12.0-3/Mambaforge-Linux-x86_64.sh" -o /tmp/Mambaforge.sh && \
+    bash /tmp/Mambaforge.sh -b -p /opt/conda && \
+    rm /tmp/Mambaforge.sh
+
+# Ensure conda (and mamba) are in PATH
+ENV PATH="/opt/conda/bin:${PATH}"
+
+# Copy the conda-only environment YAML file into the builder stage
+COPY SLEAP-DIPLOMAT-conda.yml /tmp/
+
+# Create the conda environment (without pip dependencies)
+RUN mamba env create -f /tmp/SLEAP-DIPLOMAT-conda.yml && \
+    conda clean -ya
+
+# Copy the pip requirements file
+COPY pip_requirements.txt /tmp/
+
+# Install the pip dependencies into the newly created environment
+RUN conda run -n sleap-diplomat pip install --no-deps -r /tmp/pip_requirements.txt
+
+# (Optional) Clean pip cache to reduce image size
+RUN rm -rf /home/kasm-user/.cache/pip
+
+# Install conda-pack and pack the environment into a tarball
+RUN mamba install -c conda-forge conda-pack -y && \
+    conda-pack -n sleap-diplomat -o /tmp/sleap-diplomat.tar.gz
+
+##############################
+# Stage 2: Final Image – Install the Environment, Configure GUI, and Create Shortcuts
+##############################
+FROM kasmweb/ubuntu-jammy-desktop:1.16.0
+
+# Run as root for system modifications
+USER root
+
+# (A) System & Conda Setup
+RUN apt-get update && apt-get install -y \
+    wget \
+    git \
+    vim \
+    build-essential \
+    pkg-config \
+    libgtk-3-dev \
+    libwebkit2gtk-4.0-dev \
+    libnotify-dev \
+    freeglut3-dev \
+    dbus \
+    dbus-x11 && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install Mambaforge so conda is available in the final image
+RUN curl -fsSL "https://github.com/conda-forge/miniforge/releases/download/4.12.0-3/Mambaforge-Linux-x86_64.sh" -o /tmp/Mambaforge.sh && \
+    bash /tmp/Mambaforge.sh -b -p /opt/conda && \
+    rm /tmp/Mambaforge.sh
+ENV PATH="/opt/conda/bin:${PATH}"
+
+# Copy the pre-built conda environment tarball from the builder stage and extract it
+COPY --from=builder /tmp/sleap-diplomat.tar.gz /tmp/
+RUN mkdir -p /opt/conda/envs/sleap-diplomat && \
+    tar -xzf /tmp/sleap-diplomat.tar.gz -C /opt/conda/envs/sleap-diplomat && \
+    rm /tmp/sleap-diplomat.tar.gz
+# Prepend /usr/bin so that system DBus tools are used instead of any Conda-provided ones.
+ENV PATH="/usr/bin:/opt/conda/envs/sleap-diplomat/bin:${PATH}"
+
+# Set a Qt environment variable to support GUI apps in containers
+ENV QT_X11_NO_MITSHM=1
+
+# (B) Login & User Configuration
+ENV VNC_PW=password
+ENV KASM_PASSWORD=password
+ENV KASM_USER=kasm_user
+ENV VNC_RESOLUTION=1920x1080
+ENV SKIP_CLEAN=true
+ENV MAXIMIZE_WEBCLIENT=true
+
+# IMPORTANT: Configure the user home directories as expected by Kasm.
+# The base image uses /home/kasm-default-profile as the starting profile.
+# Here we copy that default profile to /home/kasm-user.
+ENV HOME=/home/kasm-default-profile
+WORKDIR $HOME
+RUN cp -rp /home/kasm-default-profile/. /home/kasm-user/ || true
+
+# Create necessary directories in /home/kasm-user and adjust ownership.
+RUN mkdir -p /home/kasm-user/sleap-data && \
+    mkdir -p /home/kasm-user/Desktop && \
+    chown -R 1000:1000 /home/kasm-user
+
+# (C) Desktop Shortcuts & Integration Scripts
+RUN mkdir -p /home/kasm-user/Desktop
+
+# Desktop shortcut for SLEAP
+RUN cat <<'EOF' > /home/kasm-user/Desktop/SLEAP.desktop
+[Desktop Entry]
+Name=SLEAP
+Comment=Launch SLEAP Application
+Exec=bash -c "source /opt/conda/etc/profile.d/conda.sh && conda activate sleap-diplomat && sleap"
+Icon=utilities-terminal
+Terminal=false
+Type=Application
+Categories=Graphics;
+EOF
+
+# Desktop shortcut for DIPLOMAT
+RUN cat <<'EOF' > /home/kasm-user/Desktop/Diplomat.desktop
+[Desktop Entry]
+Name=Diplomat
+Comment=Launch Diplomat Application
+Exec=bash -c "source /opt/conda/etc/profile.d/conda.sh && conda activate sleap-diplomat && diplomat"
+Icon=utilities-terminal
+Terminal=false
+Type=Application
+Categories=Graphics;
+EOF
+
+# Desktop shortcut for Jupyter Lab
+RUN cat <<'EOF' > /home/kasm-user/Desktop/JupyterLab.desktop
+[Desktop Entry]
+Name=Jupyter Lab
+Comment=Launch Jupyter Lab
+Exec=bash -c "source /opt/conda/etc/profile.d/conda.sh && conda activate sleap-diplomat && jupyter lab"
+Icon=utilities-terminal
+Terminal=false
+Type=Application
+Categories=Development;
+EOF
+
+RUN chmod +x /home/kasm-user/Desktop/*.desktop
+RUN ln -sf /home/kasm-user/Desktop /home/kasm-user/DesktopLink
+
+# (D) Set permissions for the user’s profile directories
+RUN mkdir -p /home/kasm-user/.cache/mozilla \
+    /home/kasm-user/.cache/sessions \
+    /home/kasm-user/.cache/dconf \
+    /home/kasm-user/.config \
+    /home/kasm-user/.local/share && \
+    chown -R 1000:1000 /home/kasm-user/.cache /home/kasm-user/.config /home/kasm-user/.local && \
+    chmod -R 755 /home/kasm-user/.cache /home/kasm-user/.config /home/kasm-user/.local
+
+# Finally, set the proper home directory for the running user and work there.
+ENV HOME=/home/kasm-user
+WORKDIR $HOME
+RUN mkdir -p $HOME && chown -R 1000:0 $HOME
+
+# (E) Data persistence volume
+VOLUME /home/kasm-user/sleap-data
+
+# (F) Ensure OpenSSL finds its configuration file and set DBus session bus address
+ENV OPENSSL_CONF=/etc/ssl/openssl.cnf
+ENV DBUS_SESSION_BUS_ADDRESS=unix:path=/var/run/dbus/system_bus_socket
+
+# Switch to non-root user (UID 1000 as expected by Kasm)
+USER 1000
+
+# Expose the VNC port (for the desktop)
+EXPOSE 6901
+
+# (G) Start the container using dbus-launch so a DBus session bus is started
+CMD ["/usr/bin/dbus-launch", "/dockerstartup/vnc_startup.sh", "/dockerstartup/kasm_startup.sh", "--tail-log"]
