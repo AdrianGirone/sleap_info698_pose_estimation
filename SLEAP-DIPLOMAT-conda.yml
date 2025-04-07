@@ -5,12 +5,26 @@ channels:
   - anaconda
 dependencies:
   - python=3.10
-  - pytorch                   # GPU-enabled PyTorch build
-  - cudatoolkit=11.7          # Adjust as needed
+  - pytorch # GPU-enabled PyTorch build
+  - cudatoolkit=11.7 # Adjust as needed
   - typing-extensions=3.10.0.2
   - numpy=1.21.6
   - pandas
   - matplotlib
-  - scikit-learn
+  - scikit-learn==1.0
   - opencv
-  - pip  # pip will be used later to install additional packages
+  - h5py<=3.7.0
+  - pillow>=8.3.1,<8.5.0
+  - psutil
+  - pykalman==0.9.5
+  - pyside2>=5.12 # To ensure SLEAP’s Qt interface works correctly.
+  - python-rapidjson
+  - pyyaml
+  - pyzmq
+  - qtpy>=2.0.1
+  - rich==10.16.1
+  - scipy>=1.4.1,<=1.9.0
+  - scikit-image
+  - scikit-video
+  - seaborn
+  - pip # pip will be used later to install additional packages

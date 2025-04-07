@@ -4,4 +4,3 @@ jupyter==1.1.1
 jupyterlab==3.4.4
 jupyter-server-proxy==3.2.4
 jsonschema==3.2.0
-attrs==21.4.0
