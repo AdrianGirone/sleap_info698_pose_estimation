@@ -1,0 +1,180 @@
+# Use kasmweb's preconfigured desktop environment base image
+FROM kasmweb/ubuntu-jammy-desktop:1.16.0
+USER root
+
+# Set basic environment variables and working directory
+ENV HOME=/home/kasm-default-profile
+ENV STARTUPDIR=/dockerstartup
+ENV INST_SCRIPTS=$STARTUPDIR/install
+WORKDIR $HOME
+
+# KasmVNC and authentication configuration
+ENV VNC_PW=password
+ENV KASM_PASSWORD=password
+ENV KASM_USER=kasm_user
+ENV VNC_RESOLUTION=1920x1080
+ENV SKIP_CLEAN=true
+ENV MAXIMIZE_WEBCLIENT=true
+
+###### Customize the container Here ######
+
+# Set non-interactive mode for apt
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    wget \
+    git \
+    vim \
+    software-properties-common \
+    build-essential \
+    python3-dev \
+    python3-pip \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    libgtk-3-dev \
+    libglib2.0-dev \
+    freeglut3-dev \
+    libsm6 \
+    libxext6 \
+    libxrender1 \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Miniconda to /opt/conda and add it to PATH
+ENV CONDA_DIR=/opt/conda
+RUN wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /tmp/miniconda.sh && \
+    /bin/bash /tmp/miniconda.sh -b -p ${CONDA_DIR} && \
+    rm /tmp/miniconda.sh
+ENV PATH=${CONDA_DIR}/bin:$PATH
+
+# Create necessary directories and fix ownership
+RUN mkdir -p /home/kasm-user/sleap-data /home/kasm-user/Desktop && \
+    chown -R 1000:1000 /home/kasm-user/sleap-data /home/kasm-user/Desktop
+
+# Configure conda channels (using conda-forge, nvidia, and sleap-specific channels)
+RUN mkdir -p /root/.conda && \
+    conda config --file /root/.condarc --add channels conda-forge && \
+    conda config --file /root/.condarc --add channels nvidia && \
+    conda config --file /root/.condarc --add channels sleap/label/dev && \
+    conda config --file /root/.condarc --add channels sleap && \
+    conda config --file /root/.condarc --add channels anaconda
+
+# Install mamba for faster dependency resolution
+RUN conda install -c conda-forge mamba -y
+
+# Copy the unified environment YAML file into the container.
+# (Ensure your updated SLEAP-DIPLOMAT.yml is in the build context)
+COPY SLEAP-DIPLOMAT.yml $HOME/sleap-diplomat.yml
+
+# Create the unified conda environment "sleap-diplomat" and install extra pip packages
+RUN mamba env create -f $HOME/sleap-diplomat.yml && \
+    mamba clean -ya && \
+    /bin/bash -l -c "source ${CONDA_DIR}/etc/profile.d/conda.sh && conda activate sleap-diplomat && export PYTHONNOUSERSITE=True && \
+    pip uninstall keras -y && \
+    pip install notebook jupyterlab jupyter-server-proxy"
+
+# Fix permissions so the conda environment is writable by user 1000
+RUN chown -R 1000:1000 ${CONDA_DIR}/envs/sleap-diplomat
+
+# Set up LD_LIBRARY_PATH in the environment using an activation script
+RUN mkdir -p ${CONDA_DIR}/envs/sleap-diplomat/etc/conda/activate.d && \
+    echo '#!/bin/sh' > ${CONDA_DIR}/envs/sleap-diplomat/etc/conda/activate.d/sleap_diplomat_activate.sh && \
+    echo 'export OLD_LD_LIBRARY_PATH=$LD_LIBRARY_PATH' >> ${CONDA_DIR}/envs/sleap-diplomat/etc/conda/activate.d/sleap_diplomat_activate.sh && \
+    echo 'export LD_LIBRARY_PATH=${CONDA_DIR}/envs/sleap-diplomat/lib:$LD_LIBRARY_PATH' >> ${CONDA_DIR}/envs/sleap-diplomat/etc/conda/activate.d/sleap_diplomat_activate.sh && \
+    chmod +x ${CONDA_DIR}/envs/sleap-diplomat/etc/conda/activate.d/sleap_diplomat_activate.sh
+
+# Define a helper macro for creating desktop shortcuts with login shells.
+# We'll use "bash -l -c" to force a login shell so that conda initializes correctly.
+#
+# Desktop Shortcut for SLEAP (sleap-label)
+RUN echo "[Desktop Entry]\nVersion=1.0\nName=SLEAP\nComment=SLEAP Animal Pose Tracking\nExec=bash -l -c 'source ${CONDA_DIR}/etc/profile.d/conda.sh && export PYTHONNOUSERSITE=True && conda activate sleap-diplomat && cd /home/kasm-user/sleap-data && sleap-label'\nTerminal=false\nType=Application\nIcon=utilities-terminal\nCategories=Science;" \
+    > /home/kasm-user/Desktop/sleap.desktop && \
+    chmod +x /home/kasm-user/Desktop/sleap.desktop && chown 1000:1000 /home/kasm-user/Desktop/sleap.desktop
+
+# Desktop Shortcut for DIPLOMAT
+RUN echo "[Desktop Entry]\nVersion=1.0\nName=DIPLOMAT\nComment=DIPLOMAT Animal Tracking\nExec=bash -l -c 'source ${CONDA_DIR}/etc/profile.d/conda.sh && export PYTHONNOUSERSITE=True && conda activate sleap-diplomat && cd /home/kasm-user/sleap-data && python -m diplomat'\nTerminal=false\nType=Application\nIcon=utilities-terminal\nCategories=Science;" \
+    > /home/kasm-user/Desktop/diplomat.desktop && \
+    chmod +x /home/kasm-user/Desktop/diplomat.desktop && chown 1000:1000 /home/kasm-user/Desktop/diplomat.desktop
+
+# Desktop Shortcut for Integration Script (SLEAP to DIPLOMAT)
+RUN echo "[Desktop Entry]\nVersion=1.0\nName=SLEAP to DIPLOMAT\nComment=Process SLEAP data with DIPLOMAT\nExec=bash -l -c 'source ${CONDA_DIR}/etc/profile.d/conda.sh && export PYTHONNOUSERSITE=True && conda activate sleap-diplomat && cd /home/kasm-user/sleap-data && bash /home/kasm-user/sleap_to_diplomat.sh %f'\nTerminal=true\nType=Application\nIcon=utilities-terminal\nCategories=Science;" \
+    > /home/kasm-user/Desktop/sleap-to-diplomat.desktop && \
+    chmod +x /home/kasm-user/Desktop/sleap-to-diplomat.desktop && chown 1000:1000 /home/kasm-user/Desktop/sleap-to-diplomat.desktop
+
+# Create integration script to process data between SLEAP and DIPLOMAT
+RUN echo '#!/bin/bash' > /home/kasm-user/sleap_to_diplomat.sh && \
+    echo 'source ${CONDA_DIR}/etc/profile.d/conda.sh' >> /home/kasm-user/sleap_to_diplomat.sh && \
+    echo 'export PYTHONNOUSERSITE=True' >> /home/kasm-user/sleap_to_diplomat.sh && \
+    echo 'SLEAP_FILE=$1' >> /home/kasm-user/sleap_to_diplomat.sh && \
+    echo 'OUTPUT_DIR=/home/kasm-user/sleap-data/diplomat_results' >> /home/kasm-user/sleap_to_diplomat.sh && \
+    echo 'mkdir -p $OUTPUT_DIR' >> /home/kasm-user/sleap_to_diplomat.sh && \
+    echo 'echo "Step 1: Processing SLEAP data..."' >> /home/kasm-user/sleap_to_diplomat.sh && \
+    echo 'conda activate sleap-diplomat' >> /home/kasm-user/sleap_to_diplomat.sh && \
+    echo 'sleap-convert "$SLEAP_FILE" --format h5 --output "$OUTPUT_DIR/sleap_converted.h5"' >> /home/kasm-user/sleap_to_diplomat.sh && \
+    echo 'echo "Step 2: Running DIPLOMAT analysis..."' >> /home/kasm-user/sleap_to_diplomat.sh && \
+    echo 'python -m diplomat process "$OUTPUT_DIR/sleap_converted.h5"' >> /home/kasm-user/sleap_to_diplomat.sh && \
+    chmod +x /home/kasm-user/sleap_to_diplomat.sh && chown 1000:1000 /home/kasm-user/sleap_to_diplomat.sh
+
+# Desktop Shortcut for Jupyter Lab
+RUN echo "[Desktop Entry]\nVersion=1.0\nName=Jupyter Lab\nComment=Jupyter Lab (SLEAP-DIPLOMAT environment)\nExec=bash -l -c 'source ${CONDA_DIR}/etc/profile.d/conda.sh && export PYTHONNOUSERSITE=True && conda activate sleap-diplomat && cd /home/kasm-user/sleap-data && jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token=\"\"'\nTerminal=false\nType=Application\nIcon=firefox\nCategories=Science;" \
+    > /home/kasm-user/Desktop/jupyter.desktop && \
+    chmod +x /home/kasm-user/Desktop/jupyter.desktop && chown 1000:1000 /home/kasm-user/Desktop/jupyter.desktop
+
+# (Optionally) Create menu categories for easier navigation
+RUN mkdir -p /home/kasm-user/.local/share/applications && \
+    echo "[Desktop Entry]\nType=Directory\nName=Animal Tracking\nIcon=folder" > /home/kasm-user/.local/share/applications/animal-tracking.directory && \
+    mkdir -p /home/kasm-user/.local/share/desktop-directories && \
+    cp /home/kasm-user/.local/share/applications/animal-tracking.directory /home/kasm-user/.local/share/desktop-directories/ && \
+    mkdir -p /home/kasm-user/.config/menus/applications-merged && \
+    echo '<!DOCTYPE Menu PUBLIC "-//freedesktop//DTD Menu 1.0//EN" "http://www.freedesktop.org/standards/menu-spec/menu-1.0.dtd">\n<Menu>\n<Name>Applications</Name>\n<Menu>\n<Name>Animal Tracking</Name>\n<Directory>animal-tracking.directory</Directory>\n<Include>\n<Filename>sleap.desktop</Filename>\n<Filename>diplomat.desktop</Filename>\n<Filename>sleap-to-diplomat.desktop</Filename>\n<Filename>jupyter.desktop</Filename>\n</Include>\n</Menu>\n</Menu>' > /home/kasm-user/.config/menus/applications-merged/animal-tracking.menu && \
+    chown -R 1000:1000 /home/kasm-user/.local /home/kasm-user/.config
+
+# Fix custom startup script for Jupyter Lab (if using KasmVNC)
+RUN mkdir -p /etc/kasmvnc/ && \
+    echo '#!/bin/bash' > /etc/kasmvnc/kasmvnc.startup && \
+    echo 'source ${CONDA_DIR}/etc/profile.d/conda.sh' >> /etc/kasmvnc/kasmvnc.startup && \
+    echo 'export PYTHONNOUSERSITE=True' >> /etc/kasmvnc/kasmvnc.startup && \
+    echo 'conda activate sleap-diplomat' >> /etc/kasmvnc/kasmvnc.startup && \
+    echo 'cd /home/kasm-user/sleap-data' >> /etc/kasmvnc/kasmvnc.startup && \
+    echo 'jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token="" &' >> /etc/kasmvnc/kasmvnc.startup && \
+    chmod +x /etc/kasmvnc/kasmvnc.startup
+
+# Remove any problematic custom startup scripts if present
+RUN rm -f /dockerstartup/custom_startup.sh || true && rm -f /etc/kasmvnc/custom_startup.sh || true
+
+# Create startup script for Jupyter Lab
+RUN echo '#!/bin/bash' > /home/kasm-user/start_jupyter.sh && \
+    echo 'source ${CONDA_DIR}/etc/profile.d/conda.sh' >> /home/kasm-user/start_jupyter.sh && \
+    echo 'export PYTHONNOUSERSITE=True' >> /home/kasm-user/start_jupyter.sh && \
+    echo 'conda activate sleap-diplomat' >> /home/kasm-user/start_jupyter.sh && \
+    echo 'cd /home/kasm-user/sleap-data' >> /home/kasm-user/start_jupyter.sh && \
+    echo 'jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token="" &' >> /home/kasm-user/start_jupyter.sh && \
+    chmod +x /home/kasm-user/start_jupyter.sh && chown 1000:1000 /home/kasm-user/start_jupyter.sh
+
+# Create README file for user guidance
+RUN echo '# SLEAP and DIPLOMAT Integration\n\nThis container provides both SLEAP and DIPLOMAT in a unified environment (Python 3.10) using conda/mamba. Desktop shortcuts are provided for launching SLEAP, DIPLOMAT, SLEAP-to-DIPLOMAT integration, and Jupyter Lab. In a terminal, be sure to use "bash -l" or manually source /opt/conda/etc/profile.d/conda.sh and activate the environment.' \
+    > /home/kasm-user/sleap-data/README.md && chown 1000:1000 /home/kasm-user/sleap-data/README.md
+
+# Expose port for KasmVNC
+EXPOSE 6901
+
+###### End Customize the container Here ######
+
+# Fix permissions for the kasm-user profile and default home directory settings
+RUN mkdir -p /home/kasm-user/.cache/mozilla /home/kasm-user/.cache/sessions /home/kasm-user/.cache/dconf /home/kasm-user/.config /home/kasm-user/.local/share && \
+    chown -R 1000:1000 /home/kasm-user/.cache /home/kasm-user/.config /home/kasm-user/.local && \
+    chmod -R 755 /home/kasm-user/.cache /home/kasm-user/.config /home/kasm-user/.local
+
+RUN chown -R 1000:0 $HOME && \
+    find $HOME -type d -exec chmod 755 {} \; && find $HOME -type f -exec chmod 644 {} \;
+
+ENV HOME=/home/kasm-user
+WORKDIR $HOME
+RUN mkdir -p $HOME && chown -R 1000:0 $HOME
+
+# Add volume for persistent data
+VOLUME /home/kasm-user/sleap-data
+
+USER 1000
+CMD ["--tail-log"]

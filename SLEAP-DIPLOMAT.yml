@@ -1,0 +1,30 @@
+name: sleap-diplomat
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pip
+  - numpy
+  - pandas
+  - matplotlib
+  - scikit-learn
+  - opencv-python-headless
+  - scipy
+  - pyyaml
+  - pyzmq
+  - qtpy
+  - psutil
+  - rich
+  # The following will be installed via pip
+  - pip:
+      - sleap==1.4.1
+      - diplomat-track[gui]==0.1.15
+      - jupyter
+      - jupyterlab
+      - jupyter-server-proxy
+      - python-rapidjson
+      - tensorflow
+      - keras
+      - cattrs
+      - albumentations
+      - jsmin
